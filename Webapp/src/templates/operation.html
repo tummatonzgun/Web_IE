@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #fff;
+            background-image: url('/static/logo.png');
+            background-size: 10%; /* ปรับขนาดรูปให้พอดีกับหน้าจอ */
+            background-position: right 40px top 40px; /* เว้นขอบขวาและบน 40px */
+            background-repeat: no-repeat; /* ไม่ให้รูปซ้ำ */
+            background-attachment: fixed; /* ทำให้รูปไม่เลื่อนตามการ scroll */
+        }
+        h1 {
+            color: #333;
+            margin: 50px;
+            text-align: center;
+            font-size: 55px;
+            text-shadow: black 1px 1px 1px;
+        }
+        .operation-grid {
+            display: flex;
+            flex-direction: column;   /* เปลี่ยนจาก row เป็น column */
+            align-items: center;
+            gap: 20px;
+            margin-top: 10px;
+            max-width: 800px;
+            margin: 40px auto 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 5px 5px 12px rgba(0,0,0,0.5);
+            padding: 50px 40px 30px 40px;
+        }
+        .operation-btn {
+            min-width: 200px;
+            min-height: 50px;
+            background: #1976d2;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px 20px;
+            transition: background 0.2s;
+
+        }
+        .operation-btn:hover, .operation-btn.active {
+            background: #1251a2;
+        }
+        .title {
+            font-weight: bold;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Operation</h1>
+    <div class="operation-grid">
+        <button type="button" class="operation-btn" data-operation="Singulation">Singulation</button>
+        <button type="button" class="operation-btn" data-operation="Pick & Place">Pick & Place</button>
+        <button type="button" class="operation-btn" data-operation="Die Attach">Die Attach</button>
+        <button type="button" class="operation-btn" data-operation="Wire Bond">Wire Bond</button>
+    </div>
+    <input type="hidden" name="operation" id="selectedOperation" required>
+
+    <script>
+    document.querySelectorAll('.operation-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const operation = this.getAttribute('data-operation');
+            // ส่งค่า operation ไปหน้า method.html ด้วย query string
+            window.location.href = `/method?operation=${encodeURIComponent(operation)}`;
+        });
+    });
+    </script>
+</body>
+</html>

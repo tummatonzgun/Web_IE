@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ผลลัพธ์การประมวลผล</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f5faff;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 40px auto;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(25, 118, 210, 0.10);
+            padding: 32px;
+            font-size: 20px;
+            line-height: 2;
+            color: #222; /* เพิ่มบรรทัดนี้ */
+        }
+        h2 {
+            color: #1976d2;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 2.5rem;
+        }
+        .info {
+            margin-bottom: 18px;
+            color: #333;
+        }
+        table {
+            width: 100%;
+            table-layout: auto;
+            border-collapse: collapse;
+            margin-top: 24px;
+            background: #f5faff;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        th, td {
+            border: 1px solid #bdbdbd;
+            padding: 10px 12px;
+            text-align: left;
+            max-width: 320px;
+            word-break: break-word;
+            white-space: pre-line;
+        }
+        th {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        tr:nth-child(even) {
+            background: #f9fbfc;
+        }
+        .btn-group {
+            margin-top: 32px;
+            display: flex;
+            gap: 16px;
+        }
+        .btn {
+            padding: 10px 24px;
+            border-radius: 8px;
+            border: none;
+            background: #1976d2;
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-secondary {
+            background: #888;
+        }
+        .btn:hover {
+            background: #1251a2;
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="container">
+        <h2>ผลลัพธ์การประมวลผล</h2>
+        <div class="btn-group">
+            <a href="{{ url_for('operation') }}" class="btn btn-secondary">กลับหน้าเลือก Operation</a>
+            <a href="{{ url_for('function') }}" class="btn">ประมวลผลใหม่</a>
+            {% if session.export_file_path %}
+                <a href="{{ url_for('download_result') }}" class="btn">ดาวน์โหลดผลลัพธ์</a>
+            {% endif %}
+        </div>
+        <div class="info">
+            <b>Operation:</b> {{ operation }}<br>
+            <b>Function:</b> {{ func_name }}<br>
+
+            {% if show_api %}
+            {% if start_date and end_date %}
+                <b>ช่วงวันที่ประมวลผล:</b> {{ start_date }} ถึง {{ end_date }}
+            {% else %}
+                <b>ช่วงวันที่ประมวลผล:</b> ทั้งหมด
+            {% endif %}
+            {% endif %}
+        </div>
+
+        <div style="margin-bottom: 18px;">
+            <label for="bomFilter"><b>BOM_NO:</b></label>
+            <select id="bomFilter" style="padding:6px 12px; border-radius:6px; border:1px solid #222; font-size:1rem;">
+                <option value="">-- แสดงทั้งหมด --</option>
+                {% if result and result[0]['bom_no'] is defined %}
+                    {% set bom_list = result | map(attribute='bom_no') | list %}
+                    {% for bom in bom_list|unique %}
+                        <option value="{{ bom }}">{{ bom }}</option>
+                    {% endfor %}
+                {% endif %}
+            </select>
+            <label for="tableSearch"><b>ค้นหา:</b></label>
+            <input type="text" id="tableSearch" placeholder="" style="padding:6px 12px; border-radius:6px; border:1px solid #bdbdbd; font-size:1rem;">
+        </div>
+
+        {% if table_html %}
+            <div style="overflow-x:auto;">
+                {{ table_html | safe }}
+            </div>
+        {% else %}
+            {% if result %}
+                {% if result is iterable and not result|string %}
+                    <!-- กรณี result เป็น list ของ dict หรือ DataFrame -->
+                    <div style="overflow-x:auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                {% for col in result[0].keys() %}
+                                    <th>{{ col }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in result %}
+                                <tr>
+                                    {% for col in row.keys() %}
+                                        <td>{{ row[col] }}</td>
+                                    {% endfor %}
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    </div>
+                {% elif result.__class__.__name__ == 'DataFrame' %}
+                    <!-- กรณี result เป็น pandas DataFrame -->
+                    {{ result.to_html(classes="table", border=0) | safe }}
+                {% else %}
+                    <!-- กรณี result เป็นข้อความหรือข้อมูลอื่น -->
+                    <pre>{{ result }}</pre>
+                {% endif %}
+            {% else %}
+                <div>
+                    <i>ไม่พบผลลัพธ์จากการประมวลผล</i>
+                </div>
+            {% endif %}
+        {% endif %}
+
+    </div>
+
+    <script>
+function filterTable() {
+    let filterText = document.getElementById('tableSearch').value.toLowerCase();
+    let bomValue = document.getElementById('bomFilter').value;
+    let tables = document.querySelectorAll('table');
+    tables.forEach(function(table) {
+        let trs = table.querySelectorAll('tbody tr');
+        trs.forEach(function(tr) {
+            let text = tr.textContent.toLowerCase();
+            let show = true;
+            // filter ด้วย bom_no
+            if (bomValue) {
+                let tdBom = tr.querySelector('td');
+                if (tdBom && tdBom.textContent.trim() !== bomValue) {
+                    show = false;
+                }
+            }
+            // filter ด้วย text
+            if (filterText && !text.includes(filterText)) {
+                show = false;
+            }
+            tr.style.display = show ? '' : 'none';
+        });
+    });
+}
+document.getElementById('tableSearch').addEventListener('keyup', filterTable);
+document.getElementById('bomFilter').addEventListener('change', filterTable);
+    </script>
+</body>
+</html>
