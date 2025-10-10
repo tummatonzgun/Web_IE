@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>อัปโหลดไฟล์ Part bom pkg.xlsx</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f8f8f8; margin: 0; padding: 0; }
+        .container { max-width: 800px; margin: 80px auto; background: #fff; padding: 32px 24px 24px 24px; border-radius: 8px; box-shadow: 0 2px 8px #ddd; }
+        h2 { text-align: center; margin-bottom: 24px; color: #333; }
+        input[type="file"] { width: 100%; margin-bottom: 16px; }
+        button { width: 100%; padding: 10px; background: #007bff; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .message { margin-top: 16px; text-align: center; color: #007bff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>อัปโหลดไฟล์ Part bom pkg.xlsx</h2>
+        <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".xlsx" required>
+            <button type="submit">อัปโหลดและแทนที่ไฟล์</button>
+        </form>
+        <a href="{{ url_for('method', operation=operation) }}">
+            <button type="button" style="width:100%;margin-top:10px;background-color: rgb(31, 196, 45);">ย้อนกลับ</button>
+        </a>
+        {% if message %}
+            <div class="message">{{ message }}</div>
+        {% endif %}
+    </div>
+</body>
+</html>

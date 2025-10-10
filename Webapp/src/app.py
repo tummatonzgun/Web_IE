@@ -8,6 +8,19 @@ import pandas as pd
 import requests
 import sys
 
+
+# --- เพิ่มบรรทัดนี้เพื่อบังคับ stdout/stderr เป็น utf-8 ---
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except AttributeError:
+    # สำหรับ Python <3.7 ที่ไม่มี reconfigure
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+# --- จบส่วนเพิ่ม ---
+
 # เพิ่ม path สำหรับ src และ src/functions เพื่อให้ importlib หา module เจอ
 SRC_PATH = os.path.join(os.getcwd(), "src")
 FUNCTIONS_PATH = os.path.join(SRC_PATH, "functions")
@@ -143,9 +156,8 @@ def method():
     folder_list = []
     show_process_all_in_folder = operation in ["Singulation", "Pick & Place"]  # แสดงปุ่มประมวลผลทั้งโฟลเดอร์เฉพาะบาง operation
     show_api = operation in ["Die Attach", "Wire Bond"]  # แสดง API เฉพาะบาง operation
+    folder_root = None
     if folder_name:
-        # เดิม: folder_root = os.path.join(os.getcwd(), folder_name)
-        # แก้เป็น:
         folder_root = os.path.join(os.getcwd(), "Webapp", "src", folder_name)
         if os.path.exists(folder_root):
             folder_list = [f for f in os.listdir(folder_root) if os.path.isfile(os.path.join(folder_root, f))]
@@ -357,6 +369,23 @@ def download_result():
         flash("ไม่พบไฟล์สำหรับดาวน์โหลด", "error")
         return redirect(url_for("result"))
     return send_file(export_file_path, as_attachment=True)
+
+@app.route("/upload_part_bom_pkg", methods=["GET", "POST"])
+def upload_part_bom_pkg():
+    file_path = os.path.join(os.getcwd(), "Webapp", "src", "data_MAP", "Part bom pkg.xlsx")
+    message = None
+    # ดึง operation จาก session หรือ query string
+    operation = request.args.get("operation") or session.get("operation") or "Die Attach"
+    if request.method == "POST":
+        file = request.files.get("file")
+        if file and file.filename:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            file.save(file_path)
+            message = "อัปโหลดและแทนที่ไฟล์ Part bom pkg.xlsx สำเร็จแล้ว!"
+        else:
+            message = "กรุณาเลือกไฟล์ก่อนอัปโหลด"
+    return render_template("upload_part_bom_pkg.html", message=message, operation=operation)
 
 if __name__ == "__main__":
     ip = socket.gethostbyname(socket.gethostname())

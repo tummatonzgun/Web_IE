@@ -111,12 +111,13 @@ def remove_outliers(df):
     result_dfs = []
     
     # เพิ่ม optn_code ใน groupby
-    for (bom_no, machine_model, optn_code), group_df in df.groupby([bom_col, model_col, 'optn_code']):
+    for (bom_no, machine_model, optn_code, device, package_code, bom_rev), group_df in df.groupby([bom_col, model_col, 'optn_code', 'device', 'package_code', 'bom_rev']):
         before_count = len(group_df)
         cleaned_group = remove_outliers_auto(group_df, uph_col)
         after_count = len(cleaned_group)
         cleaned_group['DataPoints_Before'] = before_count
         cleaned_group['DataPoints_After'] = after_count
+        cleaned_group['Outliers_Removed'] = before_count - after_count
         result_dfs.append(cleaned_group)
     
     return pd.concat(result_dfs, ignore_index=True)
@@ -163,14 +164,16 @@ def filter_by_date_range(df, start_date, end_date):
 def calculate_group_average(df, start_date, end_date):
     uph_col, model_col, bom_col, _ = get_column_names(df)
     # เพิ่ม optn_code ใน groupby
-    grouped = df.groupby([bom_col, model_col, 'optn_code'], as_index=False).agg({uph_col: 'mean'})
+    grouped = df.groupby([bom_col, model_col, 'optn_code', 'device', 'package_code', 'bom_rev'], as_index=False).agg({uph_col: 'mean'})
     grouped[uph_col] = grouped[uph_col].round(3)
-    other_cols = ['operation', 'optn_code'] + (['DataPoints_Before', 'DataPoints_After'] if 'DataPoints_Before' in df.columns else [])
+    other_cols = ['operation', 'optn_code'] + (['DataPoints_Before', 'DataPoints_After','Outliers_Removed'] if 'DataPoints_Before' in df.columns else [])
     if other_cols:
         firsts = df.groupby([bom_col, model_col, 'optn_code'], as_index=False)[other_cols].first()
         grouped = pd.merge(grouped, firsts, on=[bom_col, model_col, 'optn_code'], how='left')
     print(f"=== ค่าเฉลี่ย UPH ({start_date} ถึง {end_date}) ===")
-    print(grouped)
+    grouped = grouped.rename(columns={uph_col: 'UPH', model_col: 'Machine Model', bom_col: 'Bom No','operation':"Operation",
+                                      'optn_code':'Optn_Code', 'device':'Device', 'package_code':'Package Code', 'bom_rev':'Bom Rev'})
+
     return grouped
 
 def save_results(df_cleaned, grouped_average, start_date, end_date, output_dir):
@@ -253,71 +256,6 @@ def preview_date_range(file_path):
         print(f"เกิดข้อผิดพลาด: {str(e)}")
         return None
 
-def check_bom_differences(df_map):
-    """ตรวจสอบความแตกต่างใน BOM และส่งคืน dict ของความแตกต่าง"""
-    
-    # คอลัมน์ที่ต้องการตรวจสอบ
-    columns_to_check = [
-        'Die Size1', 'Wafer Size1', 'Die Size2', 'Wafer Size2', 
-        'Die Size3', 'Wafer Size3', 'Die Size4', 'Wafer Size4',
-        'Die Size5', 'Wafer Size5', 'Epoxy 1', 'Epoxy 2', 'Epoxy 3', 
-        'Epoxy 4', 'Epoxy 5', 'Wire1', '#of Wire1', '#of Bump1',
-        'Wire2', '#of Wire2', '#of Bump2', 'Compound 1', 'Compound 2', 'Solder 1'
-    ]
-    
-    # กรองเฉพาะคอลัมน์ที่มีอยู่จริง
-    existing_columns = [col for col in columns_to_check if col in df_map.columns]
-    
-    print(f"\n🔍 ตรวจสอบความแตกต่างใน BOM")
-    print(f"คอลัมน์ที่ตรวจสอบ: {len(existing_columns)} คอลัมน์")
-    
-    if not existing_columns:
-        print("⚠️ ไม่พบคอลัมน์ใดที่จะตรวจสอบได้")
-        return {}
-    
-    # หา BOM column
-    bom_col = None
-    for col in df_map.columns:
-        if 'bom' in col.lower():
-            bom_col = col
-            break
-    
-    if not bom_col:
-        print("❌ ไม่พบคอลัมน์ BOM")
-        return {}
-    
-    bom_differences = {}
-    
-    # เช็คแต่ละ BOM
-    for bom_no in df_map[bom_col].unique():
-        if pd.isna(bom_no):
-            continue
-            
-        bom_data = df_map[df_map[bom_col] == bom_no]
-        
-        if len(bom_data) <= 1:
-            bom_differences[bom_no] = "ข้อมูลเพียงแถวเดียว"
-            continue
-        
-        differences = []
-        
-        for col in existing_columns:
-            unique_values = bom_data[col].dropna().unique()
-            
-            if len(unique_values) > 1:
-                values_str = ', '.join([str(v) for v in unique_values[:3]])
-                if len(unique_values) > 3:
-                    values_str += f'... (+{len(unique_values)-3})'
-                differences.append(f"{col}({len(unique_values)}ค่า: {values_str})")
-        
-        if differences:
-            bom_differences[bom_no] = " | ".join(differences)
-            print(f"📋 BOM: {bom_no} - มีความแตกต่าง: {len(differences)} คอลัมน์")
-        else:
-            bom_differences[bom_no] = "ข้อมูลเหมือนกันหมด"
-            print(f"✅ BOM: {bom_no} - ข้อมูลเหมือนกันหมด")
-    
-    return bom_differences
 
 def map_data(average_file):
     """Map ข้อมูลเพิ่มเติมจากไฟล์ Part bom pkg ในโฟลเดอร์ data_MAP"""
@@ -326,6 +264,7 @@ def map_data(average_file):
     try:
         # โหลดไฟล์ average
         df_average = pd.read_excel(average_file, engine='openpyxl')
+
         print(f"📊 ข้อมูล average: {len(df_average)} แถว")
 
         # หาไฟล์ mapping
@@ -333,6 +272,7 @@ def map_data(average_file):
         map_folder = os.path.join(current_dir, "..", "data_MAP")
 
         mapping_file = os.path.join(map_folder, "Part bom pkg.xlsx")
+        df_map = pd.read_excel(mapping_file, engine='openpyxl')
 
         if not os.path.exists(mapping_file):
             print(f"⚠️ ไม่พบไฟล์: {mapping_file}")
@@ -342,52 +282,47 @@ def map_data(average_file):
         df_map = pd.read_excel(mapping_file, engine='openpyxl')
         print(f"📊 ข้อมูล mapping: {len(df_map)} แถว")
 
-        # ตรวจสอบความแตกต่างใน BOM
-        bom_differences = check_bom_differences(df_map)
-
         # ตรวจสอบคอลัมน์ที่จำเป็น
-        required_cols = ["Package Code", "Cust Code", "Product Number", "bom_no"]
+        required_cols = ["Product Number"]
         missing_cols = [col for col in required_cols if col not in df_map.columns]
         
         if missing_cols:
             print(f"⚠️ ไม่พบคอลัมน์: {missing_cols}")
             return average_file
 
-        # สร้างคอลัมน์ Device จากไฟล์แรก
-        df_map["Device"] = df_map[["Package Code", "Cust Code", "Product Number"]].astype(str).agg('_'.join, axis=1)
-        
         # เลือกคอลัมน์ที่ต้องการจากไฟล์แรก
-        map_cols = ["bom_no", "Device"]
+        map_cols = ["Bom No"] + required_cols
         if "#of Die" in df_map.columns:
             map_cols.append("#of Die")
         elif "of Die" in df_map.columns:
             map_cols.append("of Die")
         
-        df_map_selected = df_map[map_cols]
-
         # Merge ข้อมูลจากไฟล์แรก
-        df_merged = df_average.merge(df_map_selected, on="bom_no", how="left")
+        df_merged = df_average.merge(
+            df_map[["Package Code", "Bom No", "Bom Rev", "Product Number", "#of Die"]],
+            left_on=["Package Code", "Bom No", "Bom Rev", "Device"],
+            right_on=["Package Code", "Bom No", "Bom Rev", "Product Number"],
+            how="left"
+        )
         print(f"✅ Map ไฟล์แรกสำเร็จ: {len(df_merged)} แถว")
 
-        # เพิ่มคอลัมน์ BOM_Differences
-        df_merged['BOM_Differences'] = df_merged['bom_no'].map(bom_differences).fillna('ไม่พบข้อมูล BOM')
-        
-        print(f"✅ เพิ่มคอลัมน์ BOM_Differences เรียบร้อย")
+        df_merged["Cust"] = df_merged["Bom No"].str[:3]
+        df_merged.rename(columns={"#of Die": "#OF DIE"}, inplace=True)
+
+        column_order=["Cust","Package Code","Device","Bom No","Bom Rev","Machine Model","Operation","Optn_Code","#OF DIE",
+                      "UPH","DataPoints_Before","DataPoints_After","Outliers_Removed"]
+
+        df_merged = df_merged[column_order]
+        df_merged = df_merged.rename(columns={"Device": "Product Number"})
 
         # บันทึกไฟล์ที่ map แล้ว
         output_dir = os.path.dirname(average_file)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        mapped_file = os.path.join(output_dir, f"mapped_data_{timestamp}.xlsx")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        mapped_file = os.path.join(output_dir, f"Da_Web_{timestamp}.xlsx")
         
         df_merged.to_excel(mapped_file, index=False, engine='openpyxl')
         print(f"💾 บันทึกไฟล์ที่ map แล้ว: {mapped_file}")
-        
-        # แสดงตัวอย่างข้อมูล BOM_Differences
-        print(f"\n📋 ตัวอย่าง BOM_Differences:")
-        sample_data = df_merged[['bom_no', 'BOM_Differences']].drop_duplicates().head(3)
-        for _, row in sample_data.iterrows():
-            print(f"   BOM: {row['bom_no']} -> {row['BOM_Differences'][:100]}{'...' if len(str(row['BOM_Differences'])) > 100 else ''}")
-        
+
         return mapped_file
 
     except Exception as e:
@@ -420,9 +355,9 @@ def DA_AUTO_UPH(file_path, temp_root, start_date=None, end_date=None):
             return None
 
         # Map ข้อมูลเพิ่มเติม
-        #mapped_file = map_data(average_file)      
-        print(f"📁 ส่งคืนไฟล์: {average_file}")
-        return average_file
+        mapped_file = map_data(average_file)      
+        print(f"📁 ส่งคืนไฟล์: {mapped_file}")
+        return mapped_file
 
     except Exception as e:
         print(f"❌ DA_AUTO_UPH error: {e}")
