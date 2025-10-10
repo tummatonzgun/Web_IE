@@ -36,7 +36,7 @@ app.api_base_url = "http://th3sroeeeng4/RTMSAPI/ApiAutoUph/api"
 # Mapping operation -> function list
 OPERATION_FUNCTIONS = {
     "Singulation": ["LOGVIEW"],
-    "Pick & Place": ["PNP_CHANGE_TYPE","PNP_BOM_TYPE"],
+    "Pick & Place": ["PNP_CHANGE_TYPE","PNP_BOM_TYPE","PNP_PACK_TYPE"],
     "Die Attach": ["DA_AUTO_UPH"],
     "Wire Bond": ["WB_AUTO_UPH"],
 }
