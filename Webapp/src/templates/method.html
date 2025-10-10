@@ -230,7 +230,11 @@
         <a href="{{ url_for('operation') }}" class="btn-method-next" style="background:#888; margin-top:10px; display:block; text-align:center; text-decoration:none;">
             ย้อนกลับ
         </a>
-    </form>
+        {% if show_api %}
+        <a href="{{ url_for('upload_part_bom_pkg') }}" class="btn-method-next" style="background:#28a745; margin-top:10px; display:block; text-align:center; text-decoration:none;">
+            อัปโหลดไฟล์ Part bom pkg.xlsx
+        </a>
+        {% endif %}
 
     <div id="loadingOverlay" style="
     display:none;

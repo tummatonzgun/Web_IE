@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>ผลลัพธ์การประมวลผล</title>
+    <title>Result</title>
     <style>
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
@@ -11,7 +11,7 @@
             padding: 0;
         }
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 40px auto;
             background: #fff;
             border-radius: 16px;
@@ -44,13 +44,24 @@
             border: 1px solid #bdbdbd;
             padding: 10px 12px;
             text-align: left;
-            max-width: 320px;
-            word-break: break-word;
-            white-space: pre-line;
+            /* line-height เดิมสูงเกินไป ทำให้ดูเว้นบรรทัด */
+            line-height: 1.4;
         }
+        /* FIX: ไม่ให้หัวตารางตัดคำกลางตัวอักษร */
         th {
             background: #e3f2fd;
             color: #1976d2;
+            white-space: nowrap;     /* แสดงเต็มบรรทัดเดียว */
+            word-break: normal;      /* ไม่ตัดกลางคำ */
+            overflow: hidden;        /* ถ้ายาวเกิน ให้เลื่อนแนวนอนจาก container */
+            text-overflow: ellipsis; /* ถ้าจำเป็น */
+        }
+        /* ให้เฉพาะข้อมูลในเซลล์ตัดบรรทัดได้ */
+        td {
+            white-space: normal;         /* ห่อบรรทัดตามปกติ */
+            word-break: break-word;      /* ตัดคำเมื่อต้องจำเป็น */
+            overflow-wrap: anywhere;     /* ป้องกันล้นกรอบ */
+            max-width: 320px;
         }
         tr:nth-child(even) {
             background: #f9fbfc;
@@ -78,12 +89,56 @@
         .btn:hover {
             background: #1251a2;
         }
+        .table-wrapper { position: relative; }
+
+        /* แถบเลื่อนบน */
+        .scroll-top {
+            overflow-x: auto;
+            overflow-y: hidden;
+            height: 16px;           /* ความสูงแถบเลื่อน */
+            margin: 8px 0 6px 0;    /* อยู่เหนือหัวตาราง */
+            background: #f5faff;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            position: sticky;   /* NEW */
+            top: 0;             /* NEW */
+            z-index: 20;        /* NEW */
+        }
+        .scroll-top-inner { height: 1px; }  /* ตัวหลอกให้เกิดสกรอลล์ */
+
+        /* กล่องตาราง: ไม่จำกัดความสูงแนวตั้ง ให้หน้าเว็บเป็นคนเลื่อน */
+        .table-scroll {
+            overflow-x: auto;   /* แนวนอนยังเลื่อนได้ */
+            overflow-y: visible;/* ไม่สร้างกล่องเลื่อนแนวตั้ง */
+            border-radius: 8px;
+            background: #f5faff;
+            /* max-height: 70vh;  REMOVED */
+        }
+        .table-scroll::-webkit-scrollbar { height: 0; }
+        .table-scroll { scrollbar-width: none; }
+
+        /* ให้ตารางกว้างตามเนื้อหาเพื่อให้เกิดสกรอลล์แนวนอน */
+        .table-scroll table {
+            width: max-content;
+            min-width: 100%;
+            table-layout: auto;
+            border-collapse: collapse;
+        }
+
+        /* ไม่ตัดคำหัวตาราง */
+        th {
+            background: #e3f2fd;
+            color: #1976d2;
+            white-space: nowrap;
+            word-break: normal;
+            line-height: 1.4;
+        }
     </style>
 </head>
 <body>
     
     <div class="container">
-        <h2>ผลลัพธ์การประมวลผล</h2>
+        <h2>Result : {{ operation }}</h2>
         <div class="btn-group">
             <a href="{{ url_for('operation') }}" class="btn btn-secondary">กลับหน้าเลือก Operation</a>
             <a href="{{ url_for('function') }}" class="btn">ประมวลผลใหม่</a>
@@ -119,46 +174,53 @@
             <input type="text" id="tableSearch" placeholder="" style="padding:6px 12px; border-radius:6px; border:1px solid #bdbdbd; font-size:1rem;">
         </div>
 
+        <!-- แทนที่ส่วนแสดงตารางด้วย wrapper ที่มีแถบเลื่อนบน -->
         {% if table_html %}
-            <div style="overflow-x:auto;">
-                {{ table_html | safe }}
+          <div class="table-wrapper">
+            <div class="scroll-top"><div class="scroll-top-inner"></div></div>
+            <div class="table-scroll">
+              {{ table_html | safe }}
             </div>
+          </div>
         {% else %}
-            {% if result %}
-                {% if result is iterable and not result|string %}
-                    <!-- กรณี result เป็น list ของ dict หรือ DataFrame -->
-                    <div style="overflow-x:auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                {% for col in result[0].keys() %}
-                                    <th>{{ col }}</th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in result %}
-                                <tr>
-                                    {% for col in row.keys() %}
-                                        <td>{{ row[col] }}</td>
-                                    {% endfor %}
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                    </div>
-                {% elif result.__class__.__name__ == 'DataFrame' %}
-                    <!-- กรณี result เป็น pandas DataFrame -->
-                    {{ result.to_html(classes="table", border=0) | safe }}
-                {% else %}
-                    <!-- กรณี result เป็นข้อความหรือข้อมูลอื่น -->
-                    <pre>{{ result }}</pre>
-                {% endif %}
-            {% else %}
-                <div>
-                    <i>ไม่พบผลลัพธ์จากการประมวลผล</i>
+          {% if result %}
+            {% if result is iterable and not result|string %}
+              <div class="table-wrapper">
+                <div class="scroll-top"><div class="scroll-top-inner"></div></div>
+                <div class="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        {% for col in result[0].keys() %}
+                          <th>{{ col }}</th>
+                        {% endfor %}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for row in result %}
+                        <tr>
+                          {% for col in row.keys() %}
+                            <td>{{ row[col] }}</td>
+                          {% endfor %}
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
                 </div>
+              </div>
+            {% elif result.__class__.__name__ == 'DataFrame' %}
+              <div class="table-wrapper">
+                <div class="scroll-top"><div class="scroll-top-inner"></div></div>
+                <div class="table-scroll">
+                  {{ result.to_html(classes="table", border=0) | safe }}
+                </div>
+              </div>
+            {% else %}
+              <pre>{{ result }}</pre>
             {% endif %}
+          {% else %}
+            <div><i>ไม่พบผลลัพธ์จากการประมวลผล</i></div>
+          {% endif %}
         {% endif %}
 
     </div>
@@ -190,6 +252,50 @@ function filterTable() {
 }
 document.getElementById('tableSearch').addEventListener('keyup', filterTable);
 document.getElementById('bomFilter').addEventListener('change', filterTable);
+
+/* ซิงก์แถบเลื่อนบนกับตาราง และตั้งความกว้างตัวหลอก */
+function setupTopScroll(wrapper) {
+  const topBar = wrapper.querySelector('.scroll-top');
+  const inner = wrapper.querySelector('.scroll-top-inner');
+  const box = wrapper.querySelector('.table-scroll');
+  const table = box.querySelector('table');
+  if (!table) return;
+
+  const syncWidth = () => { inner.style.width = table.scrollWidth + 'px'; };
+  syncWidth();
+
+  // อัปเดตเมื่อขนาดตารางเปลี่ยน
+  if (window.ResizeObserver) {
+    new ResizeObserver(syncWidth).observe(table);
+  } else {
+    window.addEventListener('resize', syncWidth);
+  }
+
+  // ซิงก์ตำแหน่งเลื่อน
+  let lock = false;
+  topBar.addEventListener('scroll', () => {
+    if (lock) return; lock = true; box.scrollLeft = topBar.scrollLeft; lock = false;
+  });
+  box.addEventListener('scroll', () => {
+    if (lock) return; lock = true; topBar.scrollLeft = box.scrollLeft; lock = false;
+  });
+}
+
+function stripIntegerDotZero() {
+  document.querySelectorAll('table tbody td').forEach(td => {
+    const t = td.textContent.trim();
+    if (!t) return;
+    const n = Number(t.replace(/,/g, ''));
+    if (!Number.isNaN(n) && Number.isFinite(n) && Math.abs(n % 1) < 1e-12) {
+      td.textContent = String(Math.trunc(n)); // 1.0 -> 1
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.table-wrapper').forEach(setupTopScroll);
+  stripIntegerDotZero(); // เรียกหลังตารางถูกเรนเดอร์
+});
     </script>
 </body>
 </html>
