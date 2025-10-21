@@ -7,7 +7,17 @@ import json
 import pandas as pd
 import requests
 import sys
+from pathlib import Path
 
+# --- Base paths (ยึดตำแหน่งไฟล์นี้) ---
+BASE_DIR = Path(__file__).resolve().parent            # ...\Webapp\src
+DATA_MAP_DIR = BASE_DIR / "data_MAP"
+DATA_DIRS = {
+    "Die Attach": BASE_DIR / "data_Da",
+    "Pick & Place": BASE_DIR / "data_PNP",
+    "Wire Bond": BASE_DIR / "data_WB",
+    "Singulation": BASE_DIR / "data_logview",
+}
 
 # --- เพิ่มบรรทัดนี้เพื่อบังคับ stdout/stderr เป็น utf-8 ---
 os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
@@ -22,12 +32,11 @@ except AttributeError:
 # --- จบส่วนเพิ่ม ---
 
 # เพิ่ม path สำหรับ src และ src/functions เพื่อให้ importlib หา module เจอ
-SRC_PATH = os.path.join(os.getcwd(), "src")
-FUNCTIONS_PATH = os.path.join(SRC_PATH, "functions")
-if SRC_PATH not in sys.path:
-    sys.path.append(SRC_PATH)
-if FUNCTIONS_PATH not in sys.path:
-    sys.path.append(FUNCTIONS_PATH)
+# เดิม: อิง os.getcwd() → อาจเพี้ยน
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
+if str(BASE_DIR / "functions") not in sys.path:
+    sys.path.append(str(BASE_DIR / "functions"))
 
 app = Flask(__name__)
 app.secret_key = "your_secret_key"
@@ -36,7 +45,7 @@ app.api_base_url = "http://th3sroeeeng4/RTMSAPI/ApiAutoUph/api"
 # Mapping operation -> function list
 OPERATION_FUNCTIONS = {
     "Singulation": ["LOGVIEW"],
-    "Pick & Place": ["PNP_CHANGE_TYPE","PNP_BOM_TYPE","PNP_PACK_TYPE"],
+    "Pick & Place": ["PNP_CHANGE_TYPE","PNP_BOM_TYPE"],
     "Die Attach": ["DA_AUTO_UPH"],
     "Wire Bond": ["WB_AUTO_UPH"],
 }
@@ -54,16 +63,7 @@ def method():
         input_method = request.form.get("inputMethod")
         session["input_method"] = input_method
 
-        # เพิ่ม mapping ตรงนี้
-        operation_folder_map = {
-            "Die Attach": "data_Da",
-            "Pick & Place": "data_PNP",
-            "Wire Bond": "data_WB",
-            "Singulation": "data_logview",
-        }
-        folder_name = operation_folder_map.get(operation, "")
-
-        temp_root = os.path.join(os.getcwd(), "temp")
+        temp_root = BASE_DIR.parent / "temp"
         os.makedirs(temp_root, exist_ok=True)
 
         # รับไฟล์ (อัปโหลดหลายไฟล์)
@@ -73,7 +73,7 @@ def method():
             if files and any(f.filename for f in files):
                 for file in files:
                     if file and file.filename:
-                        file_path = os.path.join(temp_root, file.filename)
+                        file_path = str((temp_root / file.filename).resolve())
                         file.save(file_path)
                         uploaded_files.append(file_path)
                 session["uploaded_file_path"] = uploaded_files  # เก็บเป็น list
@@ -87,8 +87,8 @@ def method():
             if not selected_files:
                 flash("กรุณาเลือกไฟล์จากโฟลเดอร์ก่อน", "error")
                 return redirect(url_for("method", operation=operation))
-            src_folder = os.path.join(os.getcwd(), "Webapp", "src", folder_name)
-            file_paths = [os.path.join(src_folder, f) for f in selected_files]
+            src_folder = DATA_DIRS.get(operation)
+            file_paths = [str((src_folder / f).resolve()) for f in selected_files]
             session["selected_folder"] = file_paths  # เก็บเป็น list
 
         # รับ API params (เหมือนเดิม)
@@ -134,7 +134,7 @@ def method():
 
             if all_data:
                 json_filename = f"api_{plant}_{year_quarter}_{api_operation}_{bom_no or 'none'}.json"
-                json_path = os.path.join(temp_root, json_filename)
+                json_path = str((temp_root / json_filename).resolve())
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(all_data, f, ensure_ascii=False)
                 session["api_json_path"] = json_path
@@ -157,13 +157,13 @@ def method():
     show_process_all_in_folder = operation in ["Singulation", "Pick & Place"]  # แสดงปุ่มประมวลผลทั้งโฟลเดอร์เฉพาะบาง operation
     show_api = operation in ["Die Attach", "Wire Bond"]  # แสดง API เฉพาะบาง operation
     folder_root = None
-    if folder_name:
-        folder_root = os.path.join(os.getcwd(), "Webapp", "src", folder_name)
-        if os.path.exists(folder_root):
-            folder_list = [f for f in os.listdir(folder_root) if os.path.isfile(os.path.join(folder_root, f))]
-    print("DEBUG folder_root:", folder_root)
+    src_folder = DATA_DIRS.get(operation)
+    if src_folder and src_folder.exists():
+        folder_root = str(src_folder.name)
+        folder_list = [f for f in os.listdir(src_folder) if (src_folder / f).is_file()]
+    print("DEBUG src_folder:", src_folder)
     print("DEBUG folder_list:", folder_list)
-    return render_template("method.html", operation=operation, folder_root=folder_name, folder_list=folder_list, show_api=show_api, show_process_all_in_folder=show_process_all_in_folder)
+    return render_template("method.html", operation=operation, folder_root=folder_root, folder_list=folder_list, show_api=show_api, show_process_all_in_folder=show_process_all_in_folder)
 
 @app.route("/function", methods=["GET", "POST"])
 def function():
@@ -206,7 +206,7 @@ def function():
             import pandas as pd
             func_module = importlib.import_module(f"functions.{func_name.lower()}")
             func = getattr(func_module, func_name)
-            temp_root = os.path.join(os.getcwd(), "temp")
+            temp_root = str((BASE_DIR.parent / "temp").resolve())
             if func_name in ["DA_AUTO_UPH", "PNP_AUTO_UPH", "WB_AUTO_UPH"]:
                 result = func(file_path, temp_root, start_date, end_date)
             else:
@@ -241,34 +241,22 @@ def function():
 
     # GET: render หน้าเลือกฟังก์ชัน (เพิ่ม preview date range)
     input_method = session.get("input_method")
-    current_file = None
-    file_path = None
+    file_path_preview = None
     if input_method == "upload":
-        file_path = session.get("uploaded_file_path")
-        if file_path:
-            if isinstance(file_path, list):
-                current_file = [os.path.basename(f) for f in file_path]
-                file_path_preview = file_path[0]
-            else:
-                current_file = os.path.basename(file_path)
-                file_path_preview = file_path
+        paths = session.get("uploaded_file_path")
+        if paths:
+            file_path_preview = paths[0] if isinstance(paths, list) else paths
+            current_file = [os.path.basename(p) for p in paths] if isinstance(paths, list) else os.path.basename(paths)
     elif input_method == "folder":
-        folder = session.get("selected_folder")
-        if folder:
-            if isinstance(folder, list):
-                current_file = [os.path.basename(f) for f in folder]
-                file_path_preview = folder[0]
-            else:
-                current_file = folder
-                file_path_preview = folder
+        paths = session.get("selected_folder")
+        if paths:
+            file_path_preview = paths[0] if isinstance(paths, list) else paths
+            current_file = [os.path.basename(p) for p in paths] if isinstance(paths, list) else os.path.basename(paths)
     elif input_method == "api":
         json_path = session.get("api_json_path")
         if json_path:
-            current_file = os.path.basename(json_path)
             file_path_preview = json_path
-    else:
-        file_path_preview = None
-
+            current_file = os.path.basename(json_path)
     # Preview date range
     date_info = None
     if file_path_preview and os.path.exists(file_path_preview):
@@ -372,10 +360,10 @@ def download_result():
 
 @app.route("/upload_part_bom_pkg", methods=["GET", "POST"])
 def upload_part_bom_pkg():
-    file_path = os.path.join(os.getcwd(), "Webapp", "src", "data_MAP", "Part bom pkg.xlsx")
+    file_path = str((DATA_MAP_DIR / "Part bom pkg.xlsx").resolve())
     message = None
     # ดึง operation จาก session หรือ query string
-    operation = request.args.get("operation") or session.get("operation") or "Die Attach"
+    operation = request.args.get("operation") or session.get("operation") 
     if request.method == "POST":
         file = request.files.get("file")
         if file and file.filename:
