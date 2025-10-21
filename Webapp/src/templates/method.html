@@ -320,13 +320,13 @@
         if (!form) return;
         form.addEventListener('submit', function(e) {
             var overlay = document.getElementById('loadingOverlay');
-            if (overlay) overlay.style.display = '';
+            if (overlay) overlay.style.display = 'block';  // เปิด overlay ให้เห็นสปินเนอร์
 
             const fileInput = document.getElementById('fileInput');
 
             if (uploadRadio && uploadRadio.checked && fileInput && (!fileInput.value || fileInput.files.length === 0)) {
                 alert('กรุณาเลือกไฟล์ก่อน');
-                if (overlay) overlay.style.display = 'none';
+                if (overlay) overlay.style.display = 'none'; // ปิดถ้าตรวจไม่ผ่าน
                 e.preventDefault();
                 return false;
             }
