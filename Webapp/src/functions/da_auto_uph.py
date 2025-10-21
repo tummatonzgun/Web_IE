@@ -258,71 +258,230 @@ def preview_date_range(file_path):
 
 
 def map_data(average_file):
-    """Map ข้อมูลเพิ่มเติมจากไฟล์ Part bom pkg ในโฟลเดอร์ data_MAP"""
-    print("=== Map ข้อมูลเพิ่มเติม ===")
-    
+    """Map #OF DIE: (BOM+PKG+PN) → (BOM+PKG+PN_BASE) → (BOM+PKG) → (BOM) → CODE(ทั้ง PN/PN_BASE)"""
+    print("=== Map #OF DIE: BOM+PKG+PN → BOM+PKG+PN_BASE → BOM+PKG → BOM → CODE ===")
     try:
-        # โหลดไฟล์ average
-        df_average = pd.read_excel(average_file, engine='openpyxl')
+        df_left = pd.read_excel(average_file, engine='openpyxl').copy()
+        if 'Product Number' not in df_left.columns and 'Device' in df_left.columns:
+            df_left['Product Number'] = df_left['Device']
 
-        print(f"📊 ข้อมูล average: {len(df_average)} แถว")
-
-        # หาไฟล์ mapping
         current_dir = os.path.dirname(os.path.abspath(__file__))
         map_folder = os.path.join(current_dir, "..", "data_MAP")
-
         mapping_file = os.path.join(map_folder, "Part bom pkg.xlsx")
-        df_map = pd.read_excel(mapping_file, engine='openpyxl')
-
         if not os.path.exists(mapping_file):
             print(f"⚠️ ไม่พบไฟล์: {mapping_file}")
             return average_file
 
-        # โหลดไฟล์ mapping แรก
-        df_map = pd.read_excel(mapping_file, engine='openpyxl')
-        print(f"📊 ข้อมูล mapping: {len(df_map)} แถว")
+        df_map = pd.read_excel(mapping_file, engine='openpyxl').copy()
 
-        # ตรวจสอบคอลัมน์ที่จำเป็น
-        required_cols = ["Product Number"]
-        missing_cols = [col for col in required_cols if col not in df_map.columns]
-        
-        if missing_cols:
-            print(f"⚠️ ไม่พบคอลัมน์: {missing_cols}")
-            return average_file
+        # รีเนมคอลัมน์สำคัญ
+        def nn(s): return s.replace('_','').replace(' ','').lower()
+        ren = {}
+        for c in df_map.columns:
+            k = nn(c)
+            if k == 'productnumber': ren[c] = 'Product Number'
+            elif k in ('packagecode','pkgcode'): ren[c] = 'Package Code'
+            elif k in ('bomno','bom'): ren[c] = 'Bom No'
+            elif k == 'bomrev': ren[c] = 'Bom Rev'
+            elif k in ('custcode','customercode','cust'): ren[c] = 'Cust Code'
+            elif k in ('#ofdie','ofdie'): ren[c] = '#OF DIE'
+        if ren: df_map.rename(columns=ren, inplace=True)
+        if '#OF DIE' not in df_map.columns: df_map['#OF DIE'] = np.nan
 
-        # เลือกคอลัมน์ที่ต้องการจากไฟล์แรก
-        map_cols = ["Bom No"] + required_cols
-        if "#of Die" in df_map.columns:
-            map_cols.append("#of Die")
-        elif "of Die" in df_map.columns:
-            map_cols.append("of Die")
-        
-        # Merge ข้อมูลจากไฟล์แรก
-        df_merged = df_average.merge(
-            df_map[["Package Code", "Bom No", "Bom Rev", "Product Number", "#of Die"]],
-            left_on=["Package Code", "Bom No", "Bom Rev", "Device"],
-            right_on=["Package Code", "Bom No", "Bom Rev", "Product Number"],
-            how="left"
-        )
-        print(f"✅ Map ไฟล์แรกสำเร็จ: {len(df_merged)} แถว")
+        # ทำให้เป็น upper/strip
+        def upperize(df, cols):
+            for c in cols:
+                if c in df.columns:
+                    df[c] = df[c].astype(str).str.strip().str.upper()
 
-        df_merged["Cust"] = df_merged["Bom No"].str[:3]
-        df_merged.rename(columns={"#of Die": "#OF DIE"}, inplace=True)
+        # คีย์ normalized A–Z0–9
+        def make_norm_cols(df, keys, suffix='_K'):
+            for k in keys:
+                if k in df.columns:
+                    df[k + suffix] = (
+                        df[k].astype(str)
+                            .str.upper().str.strip()
+                            .str.replace(r'[^A-Z0-9]', '', regex=True)
+                    )
 
-        column_order=["Cust","Package Code","Device","Bom No","Bom Rev","Machine Model","Operation","Optn_Code","#OF DIE",
-                      "UPH","DataPoints_Before","DataPoints_After","Outliers_Removed"]
+        # หา PN_BASE = ตัดท้ายห้อยชุดสุดท้าย (แยกด้วย -, _, *, /, +) แล้ว normalize
+        def build_pn_base_col(df, pn_col='Product Number'):
+            if pn_col not in df.columns:
+                return
+            raw = df[pn_col].astype(str).str.upper().str.strip()
+            # เอาเว้นวรรคออกก่อน
+            raw = raw.str.replace(r'\s+', '', regex=True)
+            # แยกตาม delimiter ที่พบบ่อยในท้ายห้อย
+            parts = raw.str.split(r'[-_\*\+\/]', expand=False)
+            # ถ้ามีมากกว่า 1 ส่วน ตัดส่วนสุดท้ายทิ้ง แล้วต่อกลับ
+            base = parts.apply(lambda arr: ''.join(arr[:-1]) if isinstance(arr, list) and len(arr) > 1
+                               else (arr[0] if isinstance(arr, list) and len(arr) == 1 else np.nan))
+            df['PN_BASE'] = base
+            # normalized
+            df['PN_BASE_K'] = df['PN_BASE'].astype(str).str.replace(r'[^A-Z0-9]', '', regex=True)
 
-        df_merged = df_merged[column_order]
-        df_merged = df_merged.rename(columns={"Device": "Product Number"})
+        # ทำความสะอาดค่า #OF DIE ว่าง/#N/A เป็น NaN
+        for d in (df_left, df_map):
+            if '#OF DIE' in d.columns:
+                d['#OF DIE'] = d['#OF DIE'].replace(
+                    [r'^\s*$', r'^#N/?A$', r'^N/?A$', r'^NA$', r'^\s*nan\s*$'],
+                    np.nan, regex=True
+                )
 
-        # บันทึกไฟล์ที่ map แล้ว
+        upperize(df_left, ['Bom No', 'Package Code', 'Product Number'])
+        upperize(df_map,  ['Bom No', 'Package Code', 'Product Number', 'Cust Code'])
+
+        # คีย์ normalized + PN_BASE
+        base_keys = ['Bom No', 'Package Code', 'Product Number']
+        make_norm_cols(df_left, base_keys)
+        make_norm_cols(df_map,  base_keys)
+        build_pn_base_col(df_left, 'Product Number')
+        build_pn_base_col(df_map,  'Product Number')
+
+        out = df_left.copy()
+        if '#OF DIE' not in out.columns:
+            out['#OF DIE'] = np.nan
+        make_norm_cols(out, base_keys)
+        build_pn_base_col(out, 'Product Number')
+
+        # เลือกค่าที่ไม่ว่างก่อนเวลาจอยน์
+        def build_pref_join(df_map, keysK):
+            tmp = df_map[keysK + ['#OF DIE']].copy()
+            tmp['#OF DIE'] = tmp['#OF DIE'].replace(
+                [r'^\s*$', r'^#N/?A$', r'^N/?A$', r'^NA$', r'^\s*nan\s*$'],
+                np.nan, regex=True
+            )
+            tmp['die_num'] = pd.to_numeric(tmp['#OF DIE'], errors='coerce')
+            agg = (tmp.groupby(keysK, dropna=False)['die_num']
+                     .max()
+                     .reset_index()
+                     .rename(columns={'die_num': 'die_tmp'}))
+            return agg
+
+        # แผนจอยน์เรียงลำดับ: เพิ่ม PN_BASE เข้ามาก่อนลดเหลือ PKG/BOM
+        plans = [
+            ['Bom No_K','Package Code_K','Product Number_K'],
+            ['Bom No_K','Package Code_K','PN_BASE_K'],
+            ['Bom No_K','Package Code_K'],
+            ['Bom No_K'],
+        ]
+
+        for keysK in plans:
+            # ให้แน่ใจว่ามีคีย์ใน map
+            for raw in [k.replace('_K','') for k in keysK if not k.startswith('PN_BASE')]:
+                if raw not in df_map.columns:
+                    continue
+                if raw + '_K' not in df_map.columns:
+                    make_norm_cols(df_map, [raw])
+            if 'PN_BASE_K' in keysK and 'PN_BASE_K' not in df_map.columns:
+                build_pn_base_col(df_map, 'Product Number')
+
+            if not all(k in out.columns for k in keysK) or not all(k in df_map.columns for k in keysK):
+                continue
+
+            need = out['#OF DIE'].isna()
+            if not need.any():
+                break
+
+            joinR = build_pref_join(df_map, keysK)
+            merged = out.loc[need, keysK].merge(joinR, on=keysK, how='left')
+            idx_need = out.index[need]
+            prev = out.loc[idx_need, '#OF DIE'].to_numpy()
+            cand = merged['die_tmp'].to_numpy()
+            out.loc[idx_need, '#OF DIE'] = np.where(pd.isna(prev), cand, prev)
+
+        # Fallback CODE: PKG + Cust + PN (และลอง PN_BASE หากยังไม่เจอ)
+        if out['#OF DIE'].isna().any() and all(c in df_map.columns for c in ['Package Code','Cust Code','Product Number']):
+            # หา Cust Code จาก BOM ก่อน ถ้าไม่มีค่อยใช้ 3 ตัวแรก
+            make_norm_cols(out, ['Bom No'])
+            make_norm_cols(df_map, ['Bom No'])
+            cust_from_bom = df_map[['Bom No_K','Cust Code']].drop_duplicates(subset=['Bom No_K'])
+            out = out.merge(cust_from_bom, on='Bom No_K', how='left', suffixes=('',''))
+            if 'Cust Code_y' in out.columns:
+                if 'Cust Code' in out.columns:
+                    out['Cust Code'] = out['Cust Code'].fillna(out['Cust Code_y'])
+                else:
+                    out.rename(columns={'Cust Code_y':'Cust Code'}, inplace=True)
+                out.drop(columns=['Cust Code_y'], inplace=True, errors='ignore')
+            out['Cust Code'] = out.get('Cust Code', np.nan)
+            out['Cust Code'] = out['Cust Code'].fillna(out.get('Bom No', '').astype(str).str[:3])
+            upperize(out, ['Cust Code'])
+
+            # code จาก PN เต็ม
+            df_map['__codeK'] = (
+                df_map['Package Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                df_map['Cust Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                df_map['Product Number'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True)
+            )
+            out['__code_targetK'] = (
+                out['Package Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                out['Cust Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                out['Product Number'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True)
+            )
+
+            need = out['#OF DIE'].isna()
+            if need.any():
+                code_join = df_map[['__codeK','#OF DIE']].drop_duplicates(subset=['__codeK']).copy()
+                code_join = code_join.rename(columns={'#OF DIE':'die_tmp'})
+                merged_code = out.loc[need, ['__code_targetK']].merge(
+                    code_join, left_on='__code_targetK', right_on='__codeK', how='left'
+                )
+                idx_need = out.index[need]
+                prev = out.loc[idx_need, '#OF DIE'].to_numpy()
+                cand = merged_code['die_tmp'].to_numpy()
+                out.loc[idx_need, '#OF DIE'] = np.where(pd.isna(prev), cand, prev)
+
+            # ถ้ายังไม่เจอ ลอง CODE ด้วย PN_BASE
+            if out['#OF DIE'].isna().any() and 'PN_BASE_K' in out.columns and 'PN_BASE_K' in df_map.columns:
+                df_map['__codeBaseK'] = (
+                    df_map['Package Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                    df_map['Cust Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                    df_map['PN_BASE_K'].astype(str)
+                )
+                out['__code_targetBaseK'] = (
+                    out['Package Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                    out['Cust Code'].astype(str).str.upper().str.replace(r'[^A-Z0-9]', '', regex=True) + '_' +
+                    out['PN_BASE_K'].astype(str)
+                )
+                need2 = out['#OF DIE'].isna()
+                code_join2 = df_map[['__codeBaseK','#OF DIE']].drop_duplicates(subset=['__codeBaseK']).copy()
+                code_join2 = code_join2.rename(columns={'#OF DIE':'die_tmp'})
+                merged_code2 = out.loc[need2, ['__code_targetBaseK']].merge(
+                    code_join2, left_on='__code_targetBaseK', right_on='__codeBaseK', how='left'
+                )
+                idx_need2 = out.index[need2]
+                prev2 = out.loc[idx_need2, '#OF DIE'].to_numpy()
+                cand2 = merged_code2['die_tmp'].to_numpy()
+                out.loc[idx_need2, '#OF DIE'] = np.where(pd.isna(prev2), cand2, prev2)
+
+            # ลบคอลัมน์ช่วย
+            out.drop(columns=[c for c in ['__code_targetK','__code_targetBaseK','Bom No_K'] if c in out.columns], inplace=True, errors='ignore')
+            df_map.drop(columns=[c for c in ['__codeK','__codeBaseK','Bom No_K'] if c in df_map.columns], inplace=True, errors='ignore')
+
+        # สรุปผลลัพธ์
+        if 'Bom No' in out.columns:
+            out['Cust'] = out['Bom No'].astype(str).str[:3]
+        if 'Device' in out.columns and 'Product Number' not in out.columns:
+            out['Product Number'] = out['Device']
+        if 'Device' in out.columns:
+            out.drop(columns=['Device'], inplace=True, errors='ignore')
+
+        # จัดคอลัมน์และบันทึก
+        column_order = [
+            'Cust','Package Code','Product Number','Bom No','Bom Rev',
+            'Machine Model','Operation','Optn_Code','#OF DIE',
+            'UPH','DataPoints_Before','DataPoints_After','Outliers_Removed'
+        ]
+        column_order = [c for c in column_order if c in out.columns]
+        out = out[column_order]
+        out['#OF DIE'] = pd.to_numeric(out['#OF DIE'], errors='coerce')
+
         output_dir = os.path.dirname(average_file)
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        mapped_file = os.path.join(output_dir, f"Da_Web_{timestamp}.xlsx")
-        
-        df_merged.to_excel(mapped_file, index=False, engine='openpyxl')
-        print(f"💾 บันทึกไฟล์ที่ map แล้ว: {mapped_file}")
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        mapped_file = os.path.join(output_dir, f"Da_Web_{ts}.xlsx")
+        out.to_excel(mapped_file, index=False, engine='openpyxl')
 
+        print(f"✅ เติม #OF DIE: {int(out['#OF DIE'].notna().sum())}/{len(out)} แถว → {mapped_file}")
         return mapped_file
 
     except Exception as e:

@@ -1,7 +1,6 @@
-import pandas as pd
-import os
 from datetime import datetime
-import re
+import os, re
+import pandas as pd
 
 class WireBondingAnalyzer:
     def __init__(self):
@@ -9,6 +8,8 @@ class WireBondingAnalyzer:
         self.wb_data = None
         self.efficiency_df = None
         self.raw_data = None
+        self._wire_size_map = None   # item_no -> size text
+        self._wire_mat_map  = None   # item_no -> 'CU' or 'AU'
     
     def normalize_model_name(self, model_name):
         """ทำความสะอาดและรวมชื่อรุ่นเครื่องที่คล้ายกัน"""
@@ -25,23 +26,28 @@ class WireBondingAnalyzer:
             return model_name
         
     def normalize_optn_code(self, optn_name):
-        """ทำความสะอาดและรวมรหัส Option Code ที่คล้ายกัน"""
+        """ทำความสะอาดและรวมรหัส Option Code ที่คล้ายกัน (L/B = W/B)"""
         if not isinstance(optn_name, str):
             optn_name = str(optn_name)
 
         optn_name = optn_name.strip().upper()
 
+        # NEW: ให้ L/B เท่ากับ W/B (รองรับมี/ไม่มีช่องว่าง)
+        optn_name = re.sub(r'\bL\s*/\s*B\b', 'W/B', optn_name)
+
+        # Mapping เพิ่มเติมสำหรับชื่อที่ต้องการรวม
         mapping = {
-         "L/B-ROV-CU": "W/B-ROV-CU",
-         "L/B-ROVING": "W/B-ROV",
+            "W/B-ROVING": "W/B-ROV",   # รวมคำว่า ROVING ให้เป็น ROV
+            "L/B-ROVING": "W/B-ROV",   # เผื่อกรณีที่ยังมี L/B-ROVING โผล่มา
         }
 
+        # คงลูปเดิมไว้ (minimal change)
         for key, value in mapping.items():
             if optn_name in key:
                 return value
             
         for key, value in mapping.items():
-            if key in optn_name:  # optn_name = "W/B-ROV-CU"
+            if key in optn_name:
                 return value
 
         return optn_name
@@ -95,14 +101,18 @@ class WireBondingAnalyzer:
                 norm = col.replace('_', '').replace(' ', '').lower()
                 if norm in ['bomno', 'bom', 'bom_no']:
                     col_map[col] = 'bom_no'
-                elif norm in ['#ofwire1']:
+                elif norm in ['#ofwire1', '#ofwire', 'ofwire1']:
                     col_map[col] = 'number_required'
-                elif norm in ['#ofbump1']:
+                elif norm in ['#ofbump1', '#ofbump', 'ofbump1']:
                     col_map[col] = 'no_bump'
-                elif norm in ['wire1']:
+                elif norm in ['wire1', 'itemno1', 'item1', 'item_no1']:
                     col_map[col] = 'item_no'
-                elif norm in ['#ofwire2']:
+                elif norm in ['#ofwire2', 'ofwire2']:
                     col_map[col] = 'number_required_2'
+                elif norm in ['#ofbump2', 'ofbump2']:
+                    col_map[col] = 'no_bump_2'            # NEW: bump ของฝั่ง Wire2
+                elif norm in ['wire2', 'itemno2', 'item2', 'item_no2']:
+                    col_map[col] = 'item_no_2'            # NEW: item ของฝั่ง Wire2
                 elif norm in ['bomrev', 'bom_rev']:
                     col_map[col] = 'bom_rev'
                 elif norm in ['packagecode', 'package_code', 'pkgcode', 'pkg_code']:
@@ -110,12 +120,32 @@ class WireBondingAnalyzer:
                 elif norm in ['productnumber', 'product_number', 'productno', 'product_no']:
                     col_map[col] = 'product_number'
             self.nobump_df.rename(columns=col_map, inplace=True)
+            # มาตรฐานคีย์
             if 'bom_no' in self.nobump_df.columns:
                 self.nobump_df['bom_no'] = self.nobump_df['bom_no'].astype(str).str.strip().str.upper()
-            # ปรับมาตรฐานคีย์อื่น ๆ
-            for k in ['bom_rev', 'package_code', 'product_number']:
+
+            # ปรับเป็นตัวพิมพ์ใหญ่ให้ครบ รวม cust_code ด้วย
+            for k in ['bom_rev', 'package_code', 'product_number', 'cust_code']:
                 if k in self.nobump_df.columns:
                     self.nobump_df[k] = self.nobump_df[k].astype(str).str.strip().str.upper()
+
+            # ให้จำนวนเป็นตัวเลข
+            for k in ['no_bump', 'number_required', 'number_required_2']:
+                if k in self.nobump_df.columns:
+                    self.nobump_df[k] = pd.to_numeric(self.nobump_df[k], errors='coerce')
+
+            # NEW: สร้างคอลัมน์ Code = Package Code_Cust Code_Product Number (เฉพาะแถวที่ครบ)
+            def _compose_row_code(row):
+                pc = row.get('package_code')
+                cc = row.get('cust_code')
+                pn = row.get('product_number')
+                if pd.isna(pc) or pd.isna(cc) or pd.isna(pn) or pc == '' or cc == '' or pn == '':
+                    return None
+                return f"{str(pc).strip().upper()}_{str(cc).strip().upper()}_{str(pn).strip().upper()}"
+
+            if all(c in self.nobump_df.columns for c in ['package_code','cust_code','product_number']):
+                self.nobump_df['code'] = self.nobump_df.apply(_compose_row_code, axis=1)
+
             print(f"✅ Wire data loaded: {len(self.nobump_df)} rows")
 
             # โหลด UPH Data
@@ -196,63 +226,236 @@ class WireBondingAnalyzer:
                 mask &= (df['product_number'].astype(str).str.strip().str.upper() == norm(product_number))
         return df[mask]
 
-    # ตัวช่วย: wire2 "มีค่า" เฉพาะกรณี > 0 (ไม่รวม NaN/ว่าง/ศูนย์)
+    # NEW: ใช้เมื่อตรงเป๊ะไม่เจอเท่านั้น – ลดเงื่อนไขลงทีละระดับ
+    def _find_map_rows_fallback(self, bom_no, bom_rev=None, package_code=None, product_number=None):
+        if self.nobump_df is None or self.nobump_df.empty or not bom_no:
+            return self.nobump_df.iloc[0:0], []
+        df = self.nobump_df
+        def N(v): return str(v).strip().upper() if v is not None else None
+        vals = {
+            'bom_no': N(bom_no),
+            'bom_rev': N(bom_rev),
+            'package_code': N(package_code),
+            'product_number': N(product_number),
+        }
+        plans = [
+            ['bom_no','bom_rev','package_code','product_number'],
+            ['bom_no','bom_rev','package_code'],
+            ['bom_no','bom_rev','product_number'],
+            ['bom_no','package_code','product_number'],
+            ['bom_no','bom_rev'],
+            ['bom_no','package_code'],
+            ['bom_no','product_number'],
+            ['bom_no'],
+        ]
+        plans = [p for p in plans if all(vals.get(k) is not None for k in p)]
+        if not plans:
+            plans = [['bom_no']]
+
+        for keys in plans:
+            m = pd.Series(True, index=df.index)
+            ok = True
+            for k in keys:
+                if k not in df.columns or vals[k] is None:
+                    ok = False; break
+                m &= (df[k].astype(str).str.strip().str.upper() == vals[k])
+            if not ok:
+                continue
+            rows = df[m]
+            if not rows.empty:
+                # ให้ความสำคัญกับแถวที่มี no_bump และ number_required ครบก่อน
+                pref = rows
+                if 'no_bump' in rows.columns and 'number_required' in rows.columns:
+                    pref2 = rows[rows['no_bump'].notna() & rows['number_required'].notna()]
+                    if not pref2.empty:
+                        pref = pref2
+                return pref, keys
+
+        # NEW: สุดท้าย ลองแม็พด้วย Code = PackageCode_CustCode_ProductNumber
+        if 'code' in df.columns:
+            target_code = self._compose_code_value(
+                package_code=package_code,
+                product_number=product_number,
+                bom_no=bom_no  # ใช้ 3 ตัวแรกเป็น cust ถ้าไม่ได้ส่ง cust_code มา
+            )
+            if target_code:
+                rows = df[df['code'].astype(str).str.strip().str.upper() == target_code]
+                if not rows.empty:
+                    pref = rows
+                    if 'no_bump' in rows.columns and 'number_required' in rows.columns:
+                        pref2 = rows[rows['no_bump'].notna() & rows['number_required'].notna()]
+                        if not pref2.empty:
+                            pref = pref2
+                    return pref, ['code']
+
+        return df.iloc[0:0], []
+    
+    # ===== Helpers เฉพาะกรณี Wire2 =====
+
     def _wire2_has_value(self, rows):
         try:
-            if rows.empty or 'number_required_2' not in rows.columns:
+            if rows is None or rows.empty or 'number_required_2' not in rows.columns:
                 return False
-            v = rows['number_required_2'].iloc[0]
-            # ว่างหรือ NaN → ไม่มีค่า
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                return False
-            s = str(v).strip()
-            if s == '' or s.lower() == 'nan':
-                return False 
-            # แปลงเป็นตัวเลข ถ้า > 0 ถือว่ามีค่า
-            n = pd.to_numeric(s, errors='coerce')
-            return pd.notna(n) and n > 0
-        except Exception:
+            v = pd.to_numeric(rows['number_required_2'].iloc[0], errors='coerce')
+            return pd.notna(v) and float(v) > 0
+        except:
             return False
 
+    def _norm(self, s):
+        if s is None: return ''
+        return re.sub(r'[\s/_\-]+','', str(s)).upper()
+
+    def _extract_size_token(self, text):
+        s = self._norm(text)
+        m = re.search(r'(\d+(?:\.\d+)?)MIL', s)
+        if not m:
+            return None
+        try:
+            val = float(m.group(1))
+            return f"{val:.1f}MIL"  # 2MIL -> 2.0MIL
+        except:
+            return m.group(0)
+
+    def _material_from_optn(self, optn_code):
+        s = self._norm(optn_code)
+        if 'CU' in s: return 'CU'
+        if 'AU' in s: return 'AU'
+        if 'WBROV' in s: return 'AU'  # ดีฟอลต์ ROV
+        return None
+
+    def _material_from_item_no(self, item_no):
+        if not item_no: return None
+        s = str(item_no).strip().upper()
+        if s.startswith('WZ'): return 'CU'
+        if s.startswith('GZ'): return 'AU'
+        return None
+
+    def _ensure_wire_size_map(self):
+        if hasattr(self, '_wire_size_map') and self._wire_size_map is not None:
+            return
+        self._wire_size_map = {}
+        try:
+            base = os.path.dirname(os.path.abspath(__file__))
+            data_map_dir = os.path.join(os.path.dirname(base), "data_MAP")
+            path = os.path.join(data_map_dir, "Wire size'25.xlsx")
+            if not os.path.exists(path):
+                return
+            with pd.ExcelFile(path) as xf:
+                for sheet in xf.sheet_names:
+                    key = sheet.strip().lower()
+                    if key == "copper wire":
+                        df = xf.parse(sheet)
+                        cols = {c.strip().lower(): c for c in df.columns}
+                        c_item = cols.get("item_no")
+                        c_size = cols.get("size_cu")        # โครงสร้างใหม่
+                        if not c_item or not c_size: 
+                            continue
+                        for _, r in df.iterrows():
+                            item = str(r[c_item]).strip().upper()
+                            size = str(r[c_size]).strip()
+                            if item and size:
+                                self._wire_size_map[item] = size
+                    elif key == "au wire":
+                        df = xf.parse(sheet)
+                        cols = {c.strip().lower(): c for c in df.columns}
+                        c_item = cols.get("item_no")
+                        c_size = cols.get("size_au")        # โครงสร้างใหม่
+                        if not c_item or not c_size: 
+                            continue
+                        for _, r in df.iterrows():
+                            item = str(r[c_item]).strip().upper()
+                            size = str(r[c_size]).strip()
+                            if item and size:
+                                self._wire_size_map[item] = size
+        except Exception as e:
+            print(f"⚠️ Wire size'25 load error: {e}")
+            self._wire_size_map = {}
+
+    def _decide_wire_index(self, row, optn_code):
+        """
+        คืน 1 หรือ 2 เลือกเส้นที่ match กับ Optn_Code มากกว่า
+        เกณฑ์: วัสดุ (จาก prefix item_no WZ/GZ) และขนาด (จาก Wire size'25.xlsx), เทียบเฉพาะ token ที่ Optn_Code ระบุ
+        """
+        # เตรียมค่าของสองเส้น
+        item1 = row.get('item_no');   item2 = row.get('item_no_2')
+        mat1  = self._material_from_item_no(item1);  mat2 = self._material_from_item_no(item2)
+        self._ensure_wire_size_map()
+        size1 = self._wire_size_map.get(str(item1).upper()) if item1 else None
+        size2 = self._wire_size_map.get(str(item2).upper()) if item2 else None
+
+        optn_mat = self._material_from_optn(optn_code)
+        optn_size = self._extract_size_token(optn_code)
+
+        def score(mat_item, size_item):
+            sc = 0
+            if optn_mat and mat_item and optn_mat == mat_item:
+                sc += 1
+            if optn_size and size_item:
+                tok = self._extract_size_token(size_item)
+                if tok and tok == optn_size:
+                    sc += 1
+                elif not tok:
+                    # fallback contains
+                    if self._norm(optn_size) in self._norm(size_item) or self._norm(size_item) in self._norm(optn_size):
+                        sc += 1
+            return sc
+
+        s1 = score(mat1, size1)
+        s2 = score(mat2, size2)
+        return 2 if s2 > s1 else 1  # เสมอให้ 1
+
+    def _select_wire_fields(self, rows, optn_code):
+        """
+        คืน (item_no_selected, number_required_selected, no_bump_selected, selected_index)
+        - ถ้าไม่มี Wire2 → คืนของเส้น 1
+        - ถ้ามี Wire2 → ใช้ _decide_wire_index เลือกเส้น และคืนของเส้นนั้น
+        """
+        if rows is None or rows.empty:
+            return None, None, None, 1
+        row = rows.iloc[0]
+        # defaults = wire1
+        item = row.get('item_no')
+        nr   = row.get('number_required')
+        bump = row.get('no_bump')
+        idx  = 1
+
+        if self._wire2_has_value(rows):
+            idx = self._decide_wire_index(row, optn_code)
+            if idx == 2:
+                item = row.get('item_no_2', item)
+                nr   = row.get('number_required_2', nr)
+                bump = row.get('no_bump_2', bump)
+        return item, nr, bump, idx
+
+    # ---------- ใช้ตัวเลือกนี้ทั้งในการคำนวณและแสดงผล ----------
     def calculate_wire_per_unit(self, bom_no, optn_code=None, bom_rev=None, package_code=None, product_number=None):
-        """คำนวณจำนวนสายต่อหน่วยจากไฟล์ Map โดยพิจารณา Bom Rev, Package Code, Product Number
-           ถ้า wire2 มีค่า → ไม่คำนวณ (คืน None)"""
+        """คำนวณจำนวนสายต่อหน่วยจากไฟล์ Map (คง Wire2 เดิม; ใช้ fallback เฉพาะไม่เจอแมตช์ตรง)"""
         try:
             rows = self._filter_map_rows(bom_no, bom_rev=bom_rev, package_code=package_code, product_number=product_number)
             if rows.empty:
-                return None
-            # ถ้า wire2 มีค่า ให้ไม่คำนวณ
-            if self._wire2_has_value(rows):
+                rows, _ = self._find_map_rows_fallback(bom_no, bom_rev=bom_rev, package_code=package_code, product_number=product_number)
+            if rows.empty:
                 return None
 
-            no_bump = rows['no_bump'].iloc[0] if 'no_bump' in rows.columns else None
-            num_required = rows['number_required'].iloc[0] if 'number_required' in rows.columns else None
+            item, num_required, no_bump, _ = self._select_wire_fields(rows, optn_code)
             if pd.isna(no_bump) or pd.isna(num_required):
                 return None
-            no_bump = float(no_bump); num_required = float(num_required)
-            wire_per_unit = (no_bump / 2.0) + num_required
+            wire_per_unit = float(no_bump) / 2.0 + float(num_required)
             return wire_per_unit if wire_per_unit > 0 else None
         except Exception as e:
             print(f"❌ Error calculating wire per unit for BOM {bom_no} : {e}")
             return None
 
     def get_wire_info_for_bom_optn(self, bom_no, optn_code, bom_rev=None, package_code=None, product_number=None):
-        """ดึง ITEM_NO, NO_BUMP, NUMBER_REQUIRED จากไฟล์ Map ตาม BOM + Bom Rev + Package Code + Product Number
-           ถ้า wire2 มีค่า → คืน (item_no, None, None)"""
+        """ดึง ITEM_NO, NO_BUMP, NUMBER_REQUIRED (คง Wire2 เดิม; ใช้ fallback เมื่อไม่เจอแมตช์ตรง)"""
         try:
             rows = self._filter_map_rows(bom_no, bom_rev=bom_rev, package_code=package_code, product_number=product_number)
             if rows.empty:
+                rows, _ = self._find_map_rows_fallback(bom_no, bom_rev=bom_rev, package_code=package_code, product_number=product_number)
+            if rows.empty:
                 return None, None, None
-
-            item_no = rows['item_no'].iloc[0] if 'item_no' in rows.columns else None
-
-            # ถ้า wire2 มีค่า ให้ blank no_bump/number_required ตั้งแต่ต้น
-            if self._wire2_has_value(rows):
-                return item_no, None, None
-
-            no_bump = rows['no_bump'].iloc[0] if 'no_bump' in rows.columns else None
-            number_required = rows['number_required'].iloc[0] if 'number_required' in rows.columns else None
-            return item_no, no_bump, number_required
+            item, num_required, no_bump, _ = self._select_wire_fields(rows, optn_code)
+            return item, no_bump, num_required
         except Exception as e:
             print(f"❌ Error getting wire info for BOM {bom_no}: {e}")
             return None, None, None
@@ -324,14 +527,6 @@ class WireBondingAnalyzer:
         except Exception as e:
             print(f"❌ Error in remove_outliers: {e}")
             return df, {}
-        
-    def match_mat_size_with_optn_code(self, mat_size, optn_code):
-        # ดึงขนาดลวดจาก optn_code เช่น "2.0MIL"
-        optn_mil = re.search(r'(\d+(\.\d+)?)', optn_code)
-        mat_mil = re.search(r'(\d+(\.\d+)?)', mat_size)
-        if optn_mil and mat_mil:
-            return float(optn_mil.group(1)) == float(mat_mil.group(1))
-        return False
     
     def preprocess_data(self, start_date=None, end_date=None):
         """ประมวลผลข้อมูลเบื้องต้น"""
@@ -515,6 +710,16 @@ class WireBondingAnalyzer:
         except Exception as e:
             print(f"❌ Export error: {e}")
             return False
+
+    # เพิ่ม helper สร้าง target code สำหรับ fallback จากค่าในกรุป (cust ใช้ 3 ตัวแรกของ BOM ถ้าไม่ได้ส่งมา)
+    def _compose_code_value(self, package_code=None, product_number=None, cust_code=None, bom_no=None):
+        try:
+            cc = (cust_code or (str(bom_no)[:3] if bom_no else None))
+            if not package_code or not product_number or not cc:
+                return None
+            return f"{str(package_code).strip().upper()}_{str(cc).strip().upper()}_{str(product_number).strip().upper()}"
+        except Exception:
+            return None
 
 # === Web Interface Functions ===
 def get_available_uph_files():
