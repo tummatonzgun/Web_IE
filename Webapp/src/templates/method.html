@@ -139,6 +139,28 @@
             0% { transform: rotate(0deg);}
             100% { transform: rotate(360deg);}
         }
+        #apiResult{
+            background:#222; color:#fff; padding:1em; border-radius:8px;
+            min-height:180px; max-height:60vh;            /* สูงสุด 60% ของหน้าจอ */
+            overflow:auto;                                  /* เลื่อนดูได้ */
+            white-space:pre-wrap; word-break:break-word;    /* ตัดบรรทัดให้อ่านง่าย */
+        }
+        #apiResult.fullscreen{
+            position:fixed; left:5vw; top:5vh; width:90vw; height:90vh;
+            max-height:none; z-index:100000; background:#111;
+            box-shadow:0 0 0 9999px rgba(0,0,0,.4); border:1px solid #444;
+        }
+        #apiTools{ display:none; gap:.5rem; justify-content:flex-end; margin:.5rem 0; }
+        #apiTools .btn-mini{
+            background:#555; color:#fff; border:none; border-radius:6px;
+            padding:.4rem .8rem; cursor:pointer;
+        }
+        #apiTools .btn-mini:hover{ background:#444; }
+        #apiCollapseBtn{
+            position:fixed; right:5vw; top:5vh; z-index:100001;
+            display:none; background:#e53935; color:#fff; border:none;
+            padding:.45rem .8rem; border-radius:6px; cursor:pointer;
+        }
     </style>
 </head>
 <body>
@@ -203,7 +225,7 @@
 
             <label for="year_quarter" class="form-label">Year Quarter</label>
             <input type="text" id="year_quarter" name="year_quarter" class="form-control" required
-                   placeholder="เลือกปี 2024Q1, 2024Q2">
+                   placeholder="ใส่ได้หลายค่า เช่น 2025Q1, 2025Q2, 2025Q3">
 
             <label for="api_operation" class="form-label">Operation</label>
             <input type="text" id="api_operation" name="api_operation" class="form-control" required
@@ -216,7 +238,12 @@
             <button type="button" id="testApiBtn" class="btn-method-next" style="background:#28a745; margin-bottom:10px;">
                 ทดสอบดึง API
             </button>
-            <pre id="apiResult" style="background:#222; color:#fff; padding:1em; border-radius:8px; min-height:80px;"></pre>
+
+            <div id="apiTools">
+                <button type="button" id="apiExpandBtn" class="btn-mini">ขยาย/ย่อ</button>
+            </div>
+            <button type="button" id="apiCollapseBtn">ย่อ</button>
+            <pre id="apiResult"></pre>
         </div>
         {% endif %}
         
@@ -338,41 +365,85 @@
             }
         });
 
-        // --- API Test Button ---
+        // --- API Test Button (รองรับหลาย Q) ---
         const testApiBtn = document.getElementById('testApiBtn');
         if (testApiBtn) {
             testApiBtn.onclick = async function() {
                 const endpoint = document.getElementById('endpoint').value;
                 const plant = document.getElementById('plant').value;
-                const year_quarter = document.getElementById('year_quarter').value;
+                const year_quarter_raw = document.getElementById('year_quarter').value || '';
                 const api_operation = document.getElementById('api_operation').value;
                 const bom_no = document.getElementById('bom_no').value;
 
-                const params = new URLSearchParams({
-                    endpoint,
-                    plant,
-                    year_quarter,
-                    operation: api_operation,
-                    bom_no
-                }).toString();
-
+                const quarters = year_quarter_raw.split(/[,\s]+/).map(q => q.trim()).filter(Boolean);
                 const resultBox = document.getElementById('apiResult');
-                resultBox.textContent = "Loading...";
+                const apiTools = document.getElementById('apiTools');
+
+                if (!quarters.length) {
+                    resultBox.textContent = 'กรุณาระบุ Year Quarter เช่น 2025Q1,2025Q2';
+                    apiTools.style.display = 'none';
+                    return;
+                }
+
+                resultBox.textContent = `Loading (${quarters.join(', ')}) ...`;
+                apiTools.style.display = 'none';
+                setFullscreen(false); // ย่อก่อนเริ่มโหลด
+
                 try {
-                    const res = await fetch('/api/?' + params);
-                    let data;
-                    try {
-                        data = await res.json();
-                    } catch {
-                        resultBox.textContent = "API ไม่ได้ส่งข้อมูล JSON";
-                        return;
-                    }
-                    resultBox.textContent = JSON.stringify(data, null, 2);
+                    const reqs = quarters.map(q => {
+                        const params = new URLSearchParams({
+                            endpoint, plant, year_quarter: q, operation: api_operation, bom_no
+                        }).toString();
+                        return fetch('/api/?' + params)
+                               .then(r => r.json().catch(() => ({ error: 'NOT_JSON', quarter: q })))
+                               .catch(e => ({ error: String(e), quarter: q }));
+                    });
+                    const responses = await Promise.all(reqs);
+
+                    const all = []; const byQuarter = {};
+                    responses.forEach((data, i) => {
+                        const q = quarters[i];
+                        let rows = [];
+                        if (Array.isArray(data)) rows = data;
+                        else if (data && Array.isArray(data.data)) rows = data.data;
+                        byQuarter[q] = rows.length;
+                        all.push(...rows);
+                    });
+
+                    resultBox.textContent = JSON.stringify({
+                        quarters, count_each: byQuarter, total_rows: all.length, sample: all.slice(0, 50)
+                    }, null, 2);
+
+                    apiTools.style.display = 'flex'; // แสดงปุ่มขยายหลังมีผลลัพธ์
                 } catch (err) {
-                    resultBox.textContent = "เกิดข้อผิดพลาดในการเชื่อมต่อ API: " + err;
+                    resultBox.textContent = 'เกิดข้อผิดพลาด: ' + err;
+                    apiTools.style.display = 'none';
                 }
             };
         }
+
+        // ปุ่ม ขยาย/ย่อ + ปุ่มย่อแบบลอย และ Esc เพื่อย่อ
+        const apiExpandBtn = document.getElementById('apiExpandBtn');
+        const apiCollapseBtn = document.getElementById('apiCollapseBtn');
+        const resultBox = document.getElementById('apiResult');
+
+        function setFullscreen(on) {
+            resultBox.classList.toggle('fullscreen', on);
+            if (apiCollapseBtn) apiCollapseBtn.style.display = on ? 'inline-flex' : 'none';
+            if (apiExpandBtn) apiExpandBtn.textContent = on ? 'ย่อ' : 'ขยาย';
+        }
+
+        if (apiExpandBtn) {
+            apiExpandBtn.addEventListener('click', () => {
+                setFullscreen(!resultBox.classList.contains('fullscreen'));
+            });
+        }
+        if (apiCollapseBtn) {
+            apiCollapseBtn.addEventListener('click', () => setFullscreen(false));
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') setFullscreen(false);
+        });
     });
     </script>
 </body>
