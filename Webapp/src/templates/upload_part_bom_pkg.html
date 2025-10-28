@@ -8,21 +8,44 @@
         .container { max-width: 800px; margin: 80px auto; background: #fff; padding: 32px 24px 24px 24px; border-radius: 8px; box-shadow: 0 2px 8px #ddd; }
         h2 { text-align: center; margin-bottom: 24px; color: #333; }
         input[type="file"] { width: 100%; margin-bottom: 16px; }
-        button { width: 100%; padding: 10px; background: #007bff; color: #fff; border: none; border-radius: 4px; font-size: 16px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        .btn {
+            width: 100%;
+            height: 44px;                   /* บังคับให้สูงเท่ากัน */
+            padding: 0 16px;                /* ใช้ padding ด้านข้างแทนด้านบนล่าง */
+            box-sizing: border-box;         /* กันขนาดเพี้ยน */
+            display: flex;                  /* จัดกึ่งกลางให้เหมือนกัน */
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            text-decoration: none;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .btn-primary { background: #007bff; }
+        .btn-primary:hover { background: #0056b3; }
+        .btn-back { background: #1fc42d; margin-top: 10px; }
+        .btn-secondary { background: #6c757d; margin-top: 10px; }
+        .btn-secondary:hover { background: #5a6268; }
         .message { margin-top: 16px; text-align: center; color: #007bff; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>อัปโหลดไฟล์ Part bom pkg.xlsx</h2>
-        <form method="POST" enctype="multipart/form-data">
+
+        <!-- พก operation ใน action เสมอ -->
+        <form method="POST" action="{{ url_for('upload_part_bom_pkg', operation=operation) }}" enctype="multipart/form-data">
+            <!-- ส่งค่า operator ล่าสุดกลับไปทุกครั้ง -->
+            <input type="hidden" name="operation" value="{{ operation }}">
             <input type="file" name="file" accept=".xlsx" required>
-            <button type="submit">อัปโหลดและแทนที่ไฟล์</button>
+            <button type="submit" class="btn btn-primary">อัปโหลดและแทนที่ไฟล์</button>
         </form>
-        <a href="{{ url_for('method', operation=operation) }}">
-            <button type="button" style="width:100%;margin-top:10px;background-color: rgb(31, 196, 45);">ย้อนกลับ</button>
-        </a>
+
+        <!-- ปุ่มย้อนกลับไปหน้า method ของ operator ล่าสุด -->
+        <a class="btn btn-back" href="{{ url_for('method', operation=operation) }}">ย้อนกลับ</a>
         {% if message %}
             <div class="message">{{ message }}</div>
         {% endif %}

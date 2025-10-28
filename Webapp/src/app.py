@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 # --- Base paths (ยึดตำแหน่งไฟล์นี้) ---
-BASE_DIR = Path(__file__).resolve().parent            # ...\Webapp\src
+BASE_DIR = Path(__file__).resolve().parent    
 DATA_MAP_DIR = BASE_DIR / "data_MAP"
 DATA_DIRS = {
     "Die Attach": BASE_DIR / "data_Da",
@@ -32,7 +32,6 @@ except AttributeError:
 # --- จบส่วนเพิ่ม ---
 
 # เพิ่ม path สำหรับ src และ src/functions เพื่อให้ importlib หา module เจอ
-# เดิม: อิง os.getcwd() → อาจเพี้ยน
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
 if str(BASE_DIR / "functions") not in sys.path:
@@ -144,7 +143,12 @@ def method():
 
         return redirect(url_for("function"))
     # GET: render หน้าเลือก method
-    operation = request.args.get("operation", "")
+    # --- GET: อัปเดต operation ล่าสุดลง session ทุกครั้ง ---
+    op_arg = request.args.get("operation")
+    if op_arg:
+        session["operation"] = op_arg
+    operation = session.get("operation", op_arg or "")
+
     # --- เพิ่มสำหรับเลือกไฟล์ในโฟลเดอร์ ---
     operation_folder_map = {
         "Die Attach": "data_Da",
@@ -360,20 +364,26 @@ def download_result():
 
 @app.route("/upload_part_bom_pkg", methods=["GET", "POST"])
 def upload_part_bom_pkg():
+    # --- ใช้ค่าล่าสุดจาก query/form ถ้ามี แล้วอัปเดต session ---
+    op_param = request.values.get("operation")
+    if op_param:
+        session["operation"] = op_param
+    operation = session.get("operation", op_param or "")
+
+    DATA_MAP_DIR = Path(__file__).resolve().parent / "data_MAP"
+    DATA_MAP_DIR.mkdir(parents=True, exist_ok=True)
     file_path = str((DATA_MAP_DIR / "Part bom pkg.xlsx").resolve())
-    message = None
-    # ดึง operation จาก session หรือ query string
-    operation = request.args.get("operation") or session.get("operation") 
+
     if request.method == "POST":
         file = request.files.get("file")
         if file and file.filename:
-            if os.path.exists(file_path):
-                os.remove(file_path)
             file.save(file_path)
-            message = "อัปโหลดและแทนที่ไฟล์ Part bom pkg.xlsx สำเร็จแล้ว!"
+            flash("อัปโหลดไฟล์เรียบร้อย", "success")
+            return redirect(url_for("method", operation=operation))  # กลับไปยัง Operator ล่าสุด
         else:
-            message = "กรุณาเลือกไฟล์ก่อนอัปโหลด"
-    return render_template("upload_part_bom_pkg.html", message=message, operation=operation)
+            flash("กรุณาเลือกไฟล์ก่อนอัปโหลด", "error")
+            return redirect(url_for("upload_part_bom_pkg", operation=operation))
+    return render_template("upload_part_bom_pkg.html", operation=operation)
 
 if __name__ == "__main__":
     ip = socket.gethostbyname(socket.gethostname())
